@@ -204,7 +204,7 @@ function DrillVisualization({ isActive, latest, rulPercentage }) {
         <p style={styles.drillSubtitle}>Real-time visualization & monitoring</p>
       </div>
       
-      {/* Drill Machine - FIXED: Drill bit BEHIND body */}
+      {/* Drill Machine - FIXED: Drill bit and body as a single unit */}
       <div style={styles.drillWrapper}>
         {/* Glow effects */}
         <div style={styles.drillGlow} />
@@ -216,61 +216,64 @@ function DrillVisualization({ isActive, latest, rulPercentage }) {
           height: '500px'
         }} />
         
-        {/* DRILL BIT - BEHIND THE BODY */}
-        <div style={styles.drillBitWrapper}>
+        {/* DRILL CONTAINER - Groups drill bit and body together */}
+        <div style={styles.drillAssemblyContainer}>
+          {/* DRILL BIT - BEHIND THE BODY */}
+          <div style={styles.drillBitWrapper}>
+            <img
+              ref={drillBitRef}
+              src={drillBit}
+              style={{
+                ...styles.drillBit,
+                animation: rotationSpeed > 0 ? `drill-oscillate ${animationDuration} ease-in-out infinite alternate` : 'none',
+                opacity: rotationSpeed > 0 ? 1 : 0.7,
+                filter: rulPercentage < 30 ? 
+                  `sepia(1) saturate(3) hue-rotate(-30deg)` : 
+                  `drop-shadow(0 0 15px ${colors.primary}50)`,
+              }}
+              alt="Drill Bit"
+            />
+            
+            {/* Rotation blur effect when spinning fast */}
+            {rotationSpeed > 0.5 && (
+              <div style={{
+                ...styles.drillBitBlur,
+                opacity: rotationSpeed * 0.8,
+                animation: `drill-blur ${animationDuration} ease-in-out infinite alternate`
+              }} />
+            )}
+            
+            {/* Drilling chips/sparks effect when active */}
+            {rotationSpeed > 0.3 && (
+              <div style={styles.chipsContainer}>
+                {[...Array(8)].map((_, i) => (
+                  <div
+                    key={i}
+                    style={{
+                      ...styles.chip,
+                      left: `${Math.random() * 100}%`,
+                      top: `${Math.random() * 100}%`,
+                      animationDelay: `${i * 0.1}s`,
+                      background: `radial-gradient(circle, ${colors.warning} 0%, transparent 70%)`
+                    }}
+                  />
+                ))}
+              </div>
+            )}
+          </div>
+          
+          {/* Drill Body - ON TOP OF DRILL BIT */}
           <img
-            ref={drillBitRef}
-            src={drillBit}
-            style={{
-              ...styles.drillBit,
-              animation: rotationSpeed > 0 ? `drill-oscillate ${animationDuration} ease-in-out infinite alternate` : 'none',
-              opacity: rotationSpeed > 0 ? 1 : 0.7,
-              filter: rulPercentage < 30 ? 
-                `sepia(1) saturate(3) hue-rotate(-30deg)` : 
-                `drop-shadow(0 0 15px ${colors.primary}50)`,
-            }}
-            alt="Drill Bit"
+            src={drillBody}
+            style={styles.drillBody}
+            alt="Drill Body"
           />
           
-          {/* Rotation blur effect when spinning fast */}
-          {rotationSpeed > 0.5 && (
-            <div style={{
-              ...styles.drillBitBlur,
-              opacity: rotationSpeed * 0.8,
-              animation: `drill-blur ${animationDuration} ease-in-out infinite alternate`
-            }} />
-          )}
-          
-          {/* Drilling chips/sparks effect when active */}
-          {rotationSpeed > 0.3 && (
-            <div style={styles.chipsContainer}>
-              {[...Array(8)].map((_, i) => (
-                <div
-                  key={i}
-                  style={{
-                    ...styles.chip,
-                    left: `${Math.random() * 100}%`,
-                    top: `${Math.random() * 100}%`,
-                    animationDelay: `${i * 0.1}s`,
-                    background: `radial-gradient(circle, ${colors.warning} 0%, transparent 70%)`
-                  }}
-                />
-              ))}
-            </div>
+          {/* Heat effect when temperature is high */}
+          {latest.temp > 60 && (
+            <div style={styles.heatEffect} />
           )}
         </div>
-        
-        {/* Drill Body - ON TOP OF DRILL BIT */}
-        <img
-          src={drillBody}
-          style={styles.drillBody}
-          alt="Drill Body"
-        />
-        
-        {/* Heat effect when temperature is high */}
-        {latest.temp > 60 && (
-          <div style={styles.heatEffect} />
-        )}
         
         {/* Rotation Speed Indicator */}
         {rotationSpeed > 0 && (
@@ -1191,7 +1194,7 @@ const styles = {
     height: '500px'
   },
   
-  // Drill Visualization - FIXED: Drill bit BEHIND body
+  // Drill Visualization - FIXED: Drill bit and body as single unit
   drillContainer: {
     background: colors.cardBg,
     borderRadius: '24px',
@@ -1288,18 +1291,28 @@ const styles = {
     zIndex: 1
   },
   
+  // NEW: Drill Assembly Container - Keeps drill bit and body together
+  drillAssemblyContainer: {
+    position: 'relative',
+    width: '600px',
+    height: '400px',
+    display: 'flex',
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 3
+  },
+  
   // DRILL BIT WRAPPER - BEHIND BODY
   drillBitWrapper: {
     position: 'absolute',
     width: '140px',
     height: '80px',
-    left: '-7px',  // Positioned to match drill body
-    top: '30px',
+    left: '-10px',  // Positioned relative to the assembly container
+    top: '53px',
     zIndex: 2,  // Behind drill body
     display: 'flex',
     justifyContent: 'center',
     alignItems: 'center'
-    
   },
   
   drillBit: {
@@ -1308,8 +1321,7 @@ const styles = {
     objectFit: 'contain',
     position: 'relative',
     zIndex: 3,
-    transformOrigin: 'center center',
-    
+    transformOrigin: 'center center'
   },
   
   drillBitBlur: {
@@ -1359,7 +1371,7 @@ const styles = {
     position: 'absolute',
     width: '140px',
     height: '80px',
-    left: '120px',
+    left: '220px',
     top: '160px',
     background: `radial-gradient(circle, ${colors.danger}30 0%, transparent 70%)`,
     filter: 'blur(20px)',
