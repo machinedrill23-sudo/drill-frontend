@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { ref, onChildAdded } from "firebase/database";
+import { ref, onChildAdded, get, query, orderByKey, startAt, endAt } from "firebase/database";
 import { db } from "./firebaseConfig";
 
 // Import images from src/assets/
@@ -356,6 +356,7 @@ export default function App() {
   const [isDrillAnimating, setIsDrillAnimating] = useState(false);
   const [samplingRate, setSamplingRate] = useState('--');
   const [lastUpdated, setLastUpdated] = useState('--');
+  const [isExporting, setIsExporting] = useState(false);
   
   // Estimation states
   const [rulPrediction, setRulPrediction] = useState(null);
@@ -376,11 +377,11 @@ export default function App() {
     }
   }, [records]);
 
-  // 🔥 INSTANT REALTIME DATABASE LISTENER
+  // 🔥 INSTANT REALTIME DATABASE LISTENER (Separate from export - keeps UI fast)
   useEffect(() => {
     const drillRef = ref(db, "drillData");
     
-    // Use onChildAdded for instant updates
+    // Use onChildAdded for instant updates - This keeps UI updates FAST
     const unsubscribe = onChildAdded(drillRef, (snapshot) => {
       if (!snapshot.exists()) {
         setStatus("no data");
@@ -412,7 +413,7 @@ export default function App() {
       }
       lastTimestampRef.current = newRecord.timestamp;
 
-      // Add new record at the beginning
+      // Add new record at the beginning - This is FAST (only 1 record)
       setRecords(prev => {
         const newRecords = [newRecord, ...prev];
         if (newRecords.length > MAX_RECORDS) {
@@ -494,6 +495,115 @@ export default function App() {
     estimatedTemp = Math.min(120, Math.max(20, estimatedTemp));
     
     return estimatedTemp.toFixed(1);
+  };
+
+  // 📤 EXPORT ALL DATA FROM FIREBASE (Separate operation - doesn't slow UI)
+  async function exportAllFirebaseData() {
+    setIsExporting(true);
+    try {
+      const drillRef = ref(db, "drillData");
+      const snapshot = await get(drillRef);
+      
+      if (!snapshot.exists()) {
+        alert("No data found in Firebase!");
+        setIsExporting(false);
+        return;
+      }
+      
+      const allData = snapshot.val();
+      const records = [];
+      
+      // Convert Firebase object to array
+      for (const key in allData) {
+        const v = allData[key];
+        records.push({
+          time: v.timestamp || new Date().toLocaleString(),
+          temperature: Number(v.temperature) || 0,
+          rpm: Number(v.rpm) || 0,
+          load: Number(v.load) || 0,
+          vibration: Number(v.vibration) || 0,
+          depth: Number(v.depth) || 0,
+        });
+      }
+      
+      // Sort by timestamp if available
+      records.sort((a, b) => new Date(a.time) - new Date(b.time));
+      
+      // Generate CSV
+      const header = "Time,Temperature (°C),RPM,Load (A),Vibration (m/s²),Depth (mm)\n";
+      const rows = records.map(r => 
+        `${r.time},${r.temperature},${r.rpm},${r.load},${r.vibration},${r.depth}`
+      ).join("\n");
+      
+      const blob = new Blob([header + rows], {
+        type: "text/csv;charset=utf-8;",
+      });
+
+      const link = document.createElement("a");
+      link.href = URL.createObjectURL(blob);
+      link.download = `drill-data-complete-${new Date().toISOString().split('T')[0]}.csv`;
+      link.click();
+      
+      alert(`Successfully exported ${records.length} records from Firebase!`);
+    } catch (error) {
+      console.error("Export error:", error);
+      alert("Error exporting data from Firebase!");
+    } finally {
+      setIsExporting(false);
+    }
+  }
+
+  // 📤 Export Current UI Data (Fast - only 50 records)
+  function exportCurrentData() {
+    const header = "Time,Temperature,RPM,Load,Vibration,Depth,Estimated_Temp,Estimated_Torque,RUL\n";
+
+    const rows = records
+      .map((r) => {
+        const torque = calculateTorque(r);
+        const estTemp = estimateTemperature(r);
+        const rul = calculateRUL(r);
+        return `${r.time},${r.temp},${r.rpm},${r.load},${r.vibration},${r.depth},${estTemp},${torque},${rul}`;
+      })
+      .join("\n");
+
+    const blob = new Blob([header + rows], {
+      type: "text/csv;charset=utf-8;",
+    });
+
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
+    link.download = "drill-data-current.csv";
+    link.click();
+  }
+
+  // Export chart as PNG
+  function exportChart() {
+    if (chartRef.current) {
+      const link = document.createElement("a");
+      link.download = `${selectedMetric}-chart.png`;
+      link.href = chartRef.current.toBase64Image('image/png', 1.0);
+      link.click();
+    }
+  }
+
+  // Clear local UI data
+  function clearLocalUI() {
+    setRecords([]);
+    setStatus("cleared local UI");
+  }
+
+  const getTorqueEfficiency = () => {
+    if (!estimatedTorque || !latest.load || latest.rpm === 0) return "--";
+    const idealTorque = (latest.load * 9.55) / Math.max(latest.rpm, 1);
+    const efficiency = (parseFloat(estimatedTorque) / idealTorque) * 100;
+    return Math.min(100, Math.max(0, efficiency)).toFixed(1);
+  };
+
+  const getTemperatureAccuracy = () => {
+    if (!estimatedTemp || !latest.temp) return "--";
+    const diff = Math.abs(latest.temp - parseFloat(estimatedTemp));
+    const accuracy = Math.max(0, 100 - (diff * 2));
+    return accuracy.toFixed(1);
   };
 
   // 📈 Chart Data - God level styling
@@ -675,59 +785,6 @@ export default function App() {
     }
   };
 
-  // 📤 Export CSV
-  function exportCSV() {
-    const header = "Time,Temperature,RPM,Load,Vibration,Depth,Estimated_Temp,Estimated_Torque,RUL\n";
-
-    const rows = records
-      .map((r) => {
-        const torque = calculateTorque(r);
-        const estTemp = estimateTemperature(r);
-        const rul = calculateRUL(r);
-        return `${r.time},${r.temp},${r.rpm},${r.load},${r.vibration},${r.depth},${estTemp},${torque},${rul}`;
-      })
-      .join("\n");
-
-    const blob = new Blob([header + rows], {
-      type: "text/csv;charset=utf-8;",
-    });
-
-    const link = document.createElement("a");
-    link.href = URL.createObjectURL(blob);
-    link.download = "drill-data-with-estimations.csv";
-    link.click();
-  }
-
-  // Export chart as PNG
-  function exportChart() {
-    if (chartRef.current) {
-      const link = document.createElement("a");
-      link.download = `${selectedMetric}-chart.png`;
-      link.href = chartRef.current.toBase64Image('image/png', 1.0);
-      link.click();
-    }
-  }
-
-  // Clear local UI data
-  function clearLocalUI() {
-    setRecords([]);
-    setStatus("cleared local UI");
-  }
-
-  const getTorqueEfficiency = () => {
-    if (!estimatedTorque || !latest.load || latest.rpm === 0) return "--";
-    const idealTorque = (latest.load * 9.55) / Math.max(latest.rpm, 1);
-    const efficiency = (parseFloat(estimatedTorque) / idealTorque) * 100;
-    return Math.min(100, Math.max(0, efficiency)).toFixed(1);
-  };
-
-  const getTemperatureAccuracy = () => {
-    if (!estimatedTemp || !latest.temp) return "--";
-    const diff = Math.abs(latest.temp - parseFloat(estimatedTemp));
-    const accuracy = Math.max(0, 100 - (diff * 2));
-    return accuracy.toFixed(1);
-  };
-
   return (
     <div style={styles.app}>
       <style>
@@ -803,14 +860,30 @@ export default function App() {
             </div>
             
             <div style={styles.controlButtons}>
-              <button style={styles.controlButton} onClick={exportCSV}>
-                <span style={styles.buttonIcon}>📊</span> EXPORT DATA
-              </button>
+              <div style={styles.exportDropdown}>
+                <button style={styles.controlButton} onClick={exportCurrentData}>
+                  <span style={styles.buttonIcon}>📊</span> EXPORT CURRENT ({records.length})
+                </button>
+                <button 
+                  style={{
+                    ...styles.controlButton, 
+                    background: colors.accent,
+                    opacity: isExporting ? 0.7 : 1
+                  }} 
+                  onClick={exportAllFirebaseData}
+                  disabled={isExporting}
+                >
+                  <span style={styles.buttonIcon}>
+                    {isExporting ? '⏳' : '🔥'}
+                  </span> 
+                  {isExporting ? 'EXPORTING...' : 'EXPORT ALL FROM FIREBASE'}
+                </button>
+              </div>
               <button style={{...styles.controlButton, background: colors.info}} onClick={exportChart}>
                 <span style={styles.buttonIcon}>📈</span> EXPORT CHART
               </button>
               <button style={{...styles.controlButton, background: colors.danger}} onClick={clearLocalUI}>
-                <span style={styles.buttonIcon}>🗑️</span> CLEAR DATA
+                <span style={styles.buttonIcon}>🗑️</span> CLEAR UI DATA
               </button>
             </div>
           </div>
@@ -1151,7 +1224,15 @@ const styles = {
   
   controlButtons: {
     display: 'flex',
-    gap: '10px'
+    gap: '10px',
+    flexWrap: 'wrap',
+    justifyContent: 'flex-end'
+  },
+  
+  exportDropdown: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '5px'
   },
   
   controlButton: {
@@ -1291,7 +1372,7 @@ const styles = {
     zIndex: 1
   },
   
-  // NEW: Drill Assembly Container - Keeps drill bit and body together
+  // Drill Assembly Container - Keeps drill bit and body together
   drillAssemblyContainer: {
     position: 'relative',
     width: '600px',
@@ -1307,9 +1388,9 @@ const styles = {
     position: 'absolute',
     width: '140px',
     height: '80px',
-    left: '-10px',  // Positioned relative to the assembly container
+    left: '-0px',
     top: '53px',
-    zIndex: 2,  // Behind drill body
+    zIndex: 2,
     display: 'flex',
     justifyContent: 'center',
     alignItems: 'center'
@@ -1344,7 +1425,7 @@ const styles = {
     height: '400px',
     objectFit: 'contain',
     position: 'relative',
-    zIndex: 4,  // Higher than drill bit
+    zIndex: 4,
     filter: 'drop-shadow(0 15px 40px rgba(99, 102, 241, 0.3))'
   },
   
